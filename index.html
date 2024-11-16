@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC 画面共有デモ</title>
+  </head>
+  <body>
+    <h1>WebRTC 画面共有</h1>
+    <button id="shareButton">画面を共有</button>
+    <video id="remoteVideo" autoplay></video>
+
+    <script>
+      let localStream;
+      let peerConnection;
+      const remoteVideo = document.getElementById('remoteVideo');
+      const socket = new WebSocket('ws://localhost:8080'); // シグナリングサーバーに接続
+
+      const iceConfiguration = {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] // GoogleのSTUNサーバーを使用
+      };
+
+      socket.onmessage = (message) => {
+        const data = JSON.parse(message.data);
+        if (data.offer) {
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+          createAnswer();
+        } else if (data.answer) {
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.iceCandidate) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(data.iceCandidate));
+        }
+      };
+
+      // 画面共有を開始する関数
+      async function startSharing() {
+        try {
+          localStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+
+          // ローカルビデオの作成（自分の画面を表示）
+          const localVideo = document.createElement('video');
+          localVideo.srcObject = localStream;
+          localVideo.play();
+          document.body.appendChild(localVideo);
+
+          // PeerConnectionを作成
+          peerConnection = new RTCPeerConnection(iceConfiguration);
+
+          // ローカルストリームをPeerConnectionに追加
+          localStream.getTracks().forEach(track => {
+            peerConnection.addTrack(track, localStream);
+          });
+
+          // リモートのストリームを表示
+          peerConnection.ontrack = (event) => {
+            remoteVideo.srcObject = event.streams[0];
+          };
+
+          // オファーを作成してシグナリングサーバーに送信
+          const offer = await peerConnection.createOffer();
+          await peerConnection.setLocalDescription(offer);
+          socket.send(JSON.stringify({ offer }));
+        } catch (err) {
+          console.error('画面共有のエラー:', err);
+        }
+      }
+
+      // 画面共有開始ボタンのクリックイベント
+      document.getElementById('shareButton').addEventListener('click', startSharing);
+
+      // ICE候補をシグナリングサーバーに送信
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.send(JSON.stringify({ iceCandidate: event.candidate }));
+        }
+      };
+    </script>
+  </body>
+</html>
